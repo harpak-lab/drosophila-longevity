@@ -1,5 +1,5 @@
 # drosophila-longevity
-Fall 2021 Project with Harpak Lab at UT Austin
+### Fall 2021 Project with Harpak Lab at UT Austin
 
 This project used the data from the preprint "Diet unmasks genetic variants that regulate lifespan in outbred Drosophila" (Pallares et al. 2021).
 
