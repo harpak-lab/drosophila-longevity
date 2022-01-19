@@ -13,9 +13,11 @@ detailed description.
 - When the last ~500 surviving flies remain in a given cage, they were collected and recorded for "time N" (flies were 32-59 days old).
 
 ## Goal of Analysis 
-The goal of the project was twofold: 
+The goal of the project was twofold:
+
   (1) Replicate the authors' original analysis, which used a beta binomial to classify SNPs as having a statistically significant effect on lifespan 
   in the high sugar environment (HS), in the control environment (CTRL), in both environments, or in neither.
+  
   (2) Create a new model that adds an interaction term between time and environment, and compare to the original model results.
 
 ## The Data
