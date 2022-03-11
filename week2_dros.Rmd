@@ -1,6 +1,49 @@
-library(dplyr)
-set.seed(37)
+---
+title: "Week 2 Drosophila Work"
+output:
+  pdf_document: default
+  html_notebook: default
+---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+set.seed(37)
+library(dplyr)
+```
+
+## Overview
+
+The purpose of my work this week is to build simulated datasets similar to those used by Pallares et al. The purpose of these simulated datasets is to be able to test the power and Type I error of both the model prosposed by Pallares et al. as well as the interaction model proposed by Rebecca / Arbel. Ideally, we aim to show that the interaction model is able to effectively identify types of genetic effects (e.g. amplification) that the origin model is unable to.
+
+## Dataset Simulation
+
+As a reference for the dataset simulations, I used the simulation setup that Pallares et al. uses to compare the CMH and beta-binomial approaches for detecting genetic signal. I made some small modifications to this setup (e.g. allowing for different effects in the control and high sugar environments) that I felt would be useful in evaluating the interaction model. Specifically, we assume that $n$ individuals are sampled throughout the experiment ($\frac{1}{2}$ at $T_{0}$, $\frac{1}{4}$ in C at $T_{N}$, $\frac{1}{4}$ in HS at $T_{N}$). For each individual, $l$ loci are sampled. Let $\pi_{ij}$ be the genotype of individual $i$ at locus $j$ (1 for homozygous alternative, 0.5 for heterozygous, 0 otherwise). Let $y_{ij}$ be the number of alternative allele reads of individual $i$ at locus $j$, and let $r_{j}$ be the total number of allele reads at locus $j$ (assume this is the same for all individuals). Finally, let $\pi_{\cdot j}^{(c)}$ be the average alternative allele frequency for all individuals at locus $j$ in condition $c$, where $c \in \{T_{0}, C, HS\}$.
+\newline
+\newline
+Then, we follow the following procedure for generating a simulated dataset:
+
+(1)
+
+(a) Generate $\pi_{\cdot 1}^{(T_{0})}, ..., \pi_{\cdot l}^{(T_{0})} \sim \hat{F}_{maf}$ independently, where $\hat{F}_{maf}$ is the estimated distribution of minor allele frequencies from the data.
+
+(b) Generate the change in minor allele frequencies for each site $j$ and each condition $c$, $\Delta_{j}^{(c)}$ according to a mixture distribution. For more details on the possible parameters of this mixtures please see the code below. But, in summary, this mixture distribution can put probability of 5 different cases. (1) Both conditions null, (2) HS alt, C null, (3) C alt, HS null, (4) HS and C alt, same magnitude, (5) HS and C alt, HS effect is amplified. Once these change values are calculated, use them to calculate the minor allele frequencies for each condition at each site at $T_{N}$
+
+(2) For each locus $j$, generate genotypes for each individual, $\pi_{1j}, ..., \pi_{1n}$ according to the corresponding minor allele frequency for each site and condition. 
+
+(3) For each locus $j$, generate the total number of reads at that locus, $r_{j}$ from a mixture of negative binomial distributions. This mixture is determined empirically by fitting a negative binomial to 5000 randomly selected alleles, and then putting a weight of $\frac{1}{5000}$ on each distribution. This is exactly how Pallares et al. conducts their power simulation.
+
+(4) Finally, generate the number of alternative reads at each locus for each individual as:
+
+\begin{equation*}
+y_{ij} \sim Bin(r_{j}, \pi_{ij})
+\end{equation*}
+
+Once these steps are completed, we have a dataset on which to compute analysis. Below is the code to generate datasets of this form.
+
+```{r}
 #' Generate n genotypes with a minor allele frequency
 #'
 #' @param maf Minor allele frequency. Must be in [0, 1]
@@ -107,7 +150,8 @@ generate_tn_allele_cxs <- function(
 #' is used to generate \code{n} read counts for each SNP. Each list should contain an element t corresponding to
 #' the \code{n} argument in \code{rnbinom} and \code{p} corresponding to the \code{prob} argument in \code{rnbinom}.
 #'
-#' @return Dataframe containing information from simulations
+#' @return A list with (1) a dataframe containing information from simulations and (2) a dataframe containing
+#' the generated signal classicification for each site
 #' @export
 #'
 #' @examples
@@ -188,8 +232,11 @@ generate_simulated_dataset <- function(
   return(list(sim_df = sim_df, true_signal_df = true_signal_df))
 
 }
+```
 
-# Function to do tests of correctness of simulated dataset
+To ensure correctness of this simulation process, I built code to run some automated tests.
+
+```{r}
 test_generate_simulated_dataset <- function() {
 
   sim_df <- generate_simulated_dataset(
@@ -316,33 +363,11 @@ test_generate_simulated_dataset <- function() {
   stopifnot(abs(tn_maf_hs - .9 * .325) < .01)
 
 }
+```
 
-#test_generate_simulated_dataset()
+I also built the code to run the model proposed by Pallares et al. on the simulated data. 
 
-sim_df3 <- generate_simulated_dataset(
-  n = 1000,
-  sites = 50,
-  maf_dist = c(.25, .4),
-  prob_both_null = 0.5,
-  prob_hs_only = 0.5,
-  prob_c_only = 0.0,
-  prob_same = 0.0,
-  prob_amp = 0.0,
-  cx = -0.25,
-  nb_params_dist = list(list(t = 25, p = .4), list(t = 10, p = .3))
-)$sim_df
-
-
-
-print(0)
-
-# Again, I'm still really not sure what exactly the power simulation I do here should be
-# I think the relevant question, more than what the author's method uses,
-# is if the interaction model can properly capture the effects that we're after
-
-# Then, our argument will be along the lines of (1) We think the authors are missing biology
-# and (2) here's our alternative model that works better for capturing such effects
-
+```{r}
 #' Calculate results for simulated data based on the methods of Pallares et al.
 #' 
 #' The function fits a beta-binomial regression of allele frequency on a 3-level treatment factor(T0, C TN, HS TN).
@@ -420,36 +445,32 @@ calc_pallares_results <- function(sim_df, n, sites, pval_thresh = .05, qval_thre
   return(results_df)
 
 }
+```
 
-calc_pallares_results(sim_df3, 1000, 50)
+Below is a simple example of how to use this code:
 
-# Things seems to be looking good mechanically
-# The next step is for me is just to make sure that I think the signal is being picked up appropriately
-# I think with a few simple tests this should be relatively clear
+```{r, eval=FALSE}
+sim_df3 <- generate_simulated_dataset(
+  n = 1000,
+  sites = 50,
+  maf_dist = c(.25, .4),
+  prob_both_null = 0.5,
+  prob_hs_only = 0.5,
+  prob_c_only = 0.0,
+  prob_same = 0.0,
+  prob_amp = 0.0,
+  cx = -0.25,
+  nb_params_dist = list(list(t = 25, p = .4), list(t = 10, p = .3))
+)$sim_df
 
-# There will likely be more parameters here, but I'm not sure what makes the most sense
-# Typically one would attempt to fix a false discovery rate or a Type I error rate for the test
-# and then evaluate what has most power. However, that seems difficult to do in this case
-# because the authors aren't really controlling for anything rigorously
-calc_int_model_results <- function(sim_df, n, sites) {
-  
-  # I should fill this in once I test the function above
-  
-}
+results <- calc_pallares_results(sim_df3, 1000, 50)
+```
 
-library(data.table)
-library(dplyr)
-set.seed(37)
+Additional Research to-dos Before I meet with Arbel:
 
-# take samples of 10k just to get frequencies
-alt <- fread('data/29Jun20_merged_alt_counts_allCHR.txt') %>% distinct(site, .keep_all = TRUE) %>% sample_n(10000)
-both <- fread('data/29Jun20_merged_both_counts_allCHR.txt') %>% filter(site %in% alt$site)
+(1) Attempt to run the lrt as a permutation test and see what I get out.
 
-alt_counts <- alt %>% select(-site) %>% rowSums()
-both_counts <- both %>% select(-site) %>% rowSums()
+(2) Demonstrate how the distribution of NB and MAF parameters can be generated using the real data. Perhaps also write the code to look at simulation results vs. true results in a table.
 
-alt_count_df <- data.frame(site=alt$site, alt_count = alt_counts)
-both_count_df <- data.frame(site=both$site, total_count = both_counts)
+(3) Look over this document and commit it by monday.
 
-count_df <- alt_count_df %>% inner_join(both_count_df, by = c("site"))
-count_df <- count_df %>% mutate(alt_freq = alt_count / total_count)
