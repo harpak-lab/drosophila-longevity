@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r libraries, include=FALSE}
 set.seed(37)
 library(dplyr)
+library(data.table)
 ```
 
 ## Overview
@@ -20,22 +21,22 @@ The purpose of my work this week is to build simulated datasets similar to those
 
 ## Dataset Simulation
 
-As a reference for the dataset simulations, I used the simulation setup that Pallares et al. uses to compare the CMH and beta-binomial approaches for detecting genetic signal. I made some small modifications to this setup (e.g. allowing for different effects in the control and high sugar environments) that I felt would be useful in evaluating the interaction model. Specifically, we assume that $n$ individuals are sampled throughout the experiment ($\frac{1}{2}$ at $T_{0}$, $\frac{1}{4}$ in C at $T_{N}$, $\frac{1}{4}$ in HS at $T_{N}$). For each individual, $l$ loci are sampled. Let $\pi_{ij}$ be the genotype of individual $i$ at locus $j$ (1 for homozygous alternative, 0.5 for heterozygous, 0 otherwise). Let $y_{ij}$ be the number of alternative allele reads of individual $i$ at locus $j$, and let $r_{j}$ be the total number of allele reads at locus $j$ (assume this is the same for all individuals). Finally, let $\pi_{\cdot j}^{(c)}$ be the average alternative allele frequency for all individuals at locus $j$ in condition $c$, where $c \in \{T_{0}, C, HS\}$.
+As a reference for the dataset simulations, I used the simulation setup that Pallares et al. uses to compare the CMH and beta-binomial approaches for detecting genetic signal. I made some small modifications to this setup (e.g. allowing for different effects in the control and high sugar environments) that I felt would be useful in evaluating the interaction model. Specifically, we assume that $n$ individuals are sampled throughout the experiment ($\frac{1}{2}$ at $T_{0}$, $\frac{1}{4}$ in C at $T_{N}$, $\frac{1}{4}$ in HS at $T_{N}$). For each individual, $l$ loci are sampled. Let $\pi_{ij}$ be the genotype of individual $i$ at locus $j$ (1 for homozygous alternative, 0.5 for heterozygous, 0 otherwise). Let $y_{ij}$ be the number of alternative allele reads of individual $i$ at locus $j$, and let $r_{j}$ be the total number of allele reads at locus $j$ (assume this is the same for all individuals). Finally, let $\bar{\pi}_{\cdot j}^{(c)}$ be the average alternative allele frequency for all individuals at locus $j$ in condition $c$, where $c \in \{T_{0}, C, HS\}$.
 \newline
 \newline
-Then, we follow the following procedure for generating a simulated dataset:
+Then, we use the following procedure to generate a simulated dataset:
 
-(1)
+1.
 
-(a) Generate $\pi_{\cdot 1}^{(T_{0})}, ..., \pi_{\cdot l}^{(T_{0})} \sim \hat{F}_{maf}$ independently, where $\hat{F}_{maf}$ is the estimated distribution of minor allele frequencies from the data.
++ Generate $\bar{\pi}_{\cdot 1}^{(T_{0})}, ..., \bar{\pi}_{\cdot l}^{(T_{0})} \sim \hat{F}_{maf}$ independently, where $\hat{F}_{maf}$ is the estimated distribution of minor allele frequencies from the data.
 
-(b) Generate the change in minor allele frequencies for each site $j$ and each condition $c$, $\Delta_{j}^{(c)}$ according to a mixture distribution. For more details on the possible parameters of this mixtures please see the code below. But, in summary, this mixture distribution can put probability of 5 different cases. (1) Both conditions null, (2) HS alt, C null, (3) C alt, HS null, (4) HS and C alt, same magnitude, (5) HS and C alt, HS effect is amplified. Once these change values are calculated, use them to calculate the minor allele frequencies for each condition at each site at $T_{N}$
++ Generate the change in minor allele frequencies for each site $j$ and each condition $c$, $\Delta_{j}^{(c)}$ according to a mixture distribution. For more details on the possible parameters of this mixtures please see the code below. But, in summary, this mixture distribution can put probability on 5 different cases. (1) Both conditions null, (2) HS alt, C null, (3) C alt, HS null, (4) HS and C alt, same magnitude, (5) HS and C alt, HS effect is amplified. Once these change values are calculated, use them to calculate the minor allele frequencies for each condition at each site at $T_{N}$.
 
-(2) For each locus $j$, generate genotypes for each individual, $\pi_{1j}, ..., \pi_{1n}$ according to the corresponding minor allele frequency for each site and condition. 
+2. For each locus $j$, generate genotypes for each individual, $\pi_{1j}, ..., \pi_{1n}$ according to the corresponding minor allele frequency for each site and condition. 
 
-(3) For each locus $j$, generate the total number of reads at that locus, $r_{j}$ from a mixture of negative binomial distributions. This mixture is determined empirically by fitting a negative binomial to 5000 randomly selected alleles, and then putting a weight of $\frac{1}{5000}$ on each distribution. This is exactly how Pallares et al. conducts their power simulation.
+3. For each locus $j$, generate the total number of reads at that locus, $r_{j}$ from a mixture of negative binomial   distributions. This mixture is determined empirically by fitting a negative binomial to 5000 randomly selected alleles, and then putting a weight of $\frac{1}{5000}$ on each distribution. This is exactly how Pallares et al. conducts their power simulation.
 
-(4) Finally, generate the number of alternative reads at each locus for each individual as:
+4. Finally, generate the number of alternative reads at each locus for each individual as:
 
 \begin{equation*}
 y_{ij} \sim Bin(r_{j}, \pi_{ij})
@@ -67,13 +68,16 @@ generate_genotypes <- function(maf, n) {
 
 #' Generate Allele Frequency Changes for Simulated Dataset
 #'
-#' The function assumes that the true allele frequency changes for each site follows one of a few cases:
+#' The function assumes that the true allele frequency changes
+#' for each site follows one of a few cases:
 #' (1) The minor allele frequency change is 0 in both cases.
 #' (2) The minor allele frequency changes by \code{cx} percent in the HS case only.
 #' (3) The minor allele frequency changes by \code{cx} percent in the C case only.
 #' (4) The minor allele frequency changes by \code{cx} percent in both cases.
-#' (5) The minor allele frequency changes by \code{cx} percent in C and \code{cx} * \code{hs_amp_coef} in HS.
-#' The user is able to input the magnitude of changes as well as the probability of landing in each case.
+#' (5) The minor allele frequency changes by \code{cx} percent in C
+#' and \code{cx} * \code{hs_amp_coef} in HS.
+#' The user is able to input the magnitude of changes as well as 
+#' the probability of landing in each case.
 #'
 #' @param sites Number of SNPs for which to generate data
 #' @param prob_both_null Probability of being in case 1 in the description
@@ -103,7 +107,13 @@ generate_tn_allele_cxs <- function(
   # c(both_null, hs_only, c_only, same, amp)
   c_matrix_data <- c(rep(0, 2 * sites), rep(cx, 3 * sites))
   c_matrix <- matrix(data = c_matrix_data, ncol = sites, byrow = TRUE)
-  hs_matrix_data <- c(rep(0, sites), rep(cx, sites), rep(0, sites), rep(cx, sites), rep(cx * hs_amp_coef, sites))
+  hs_matrix_data <- c(
+    rep(0, sites), 
+    rep(cx, sites), 
+    rep(0, sites), 
+    rep(cx, sites), 
+    rep(cx * hs_amp_coef, sites)
+  )
   hs_matrix <- matrix(data = hs_matrix_data, ncol = sites, byrow = TRUE)
 
   # Select from 5 cases with specified probability
@@ -128,15 +138,21 @@ generate_tn_allele_cxs <- function(
 
 #' Generate Simulated Drosophila Dataset With Specified Signal Setup
 #'
-#' The function assumes that the true allele frequency changes for each site follows one of a few cases:
+#' The function assumes that the true allele frequency changes 
+#' for each site follows one of a few cases:
 #' (1) The minor allele frequency change is 0 in both cases.
-#' (2) The minor allele frequency changes by \code{cx} percent in the HS case only.
-#' (3) The minor allele frequency changes by \code{cx} percent in the C case only.
+#' (2) The minor allele frequency changes by \code{cx} 
+#' percent in the HS case only.
+#' (3) The minor allele frequency changes by \code{cx} 
+#' percent in the C case only.
 #' (4) The minor allele frequency changes by \code{cx} percent in both cases.
-#' (5) The minor allele frequency changes by \code{cx} percent in C and \code{cx} * \code{hs_amp_coef} in HS.
-#' The user is able to input the magnitude of changes as well as the probability of landing in each case.
+#' (5) The minor allele frequency changes by \code{cx} 
+#' percent in C and \code{cx} * \code{hs_amp_coef} in HS.
+#' The user is able to input the magnitude of changes as well as the probability
+#' of landing in each case.
 #'
-#' @param n Total number of flies. 1/2 are at time 0, 1/4 are high sugar at time N, 1/4 are control at time N
+#' @param n Total number of flies. 1/2 are at time 0, 
+#' 1/4 are high sugar at time N, 1/4 are control at time N
 #' @param sites Total number of SNP sites for each fly
 #' @param prob_both_null Probability of being in case 1 in the description
 #' @param prob_hs_only Probability of being in case 2 in the description
@@ -145,12 +161,17 @@ generate_tn_allele_cxs <- function(
 #' @param prob_amp Probability of being in case 5 in the description
 #' @param cx Percentage change of minor allele frequency at time TN
 #' @param hs_amp_coef Amplification constant, see description for more details
-#' @param nb_params_dist Vector of lists of negative binomial parameters to be sampled from to determine reads for each SNP.
-#' For each SNP, one set of these parameters are sampled, and then a negative binomial distribution with these parameters
-#' is used to generate \code{n} read counts for each SNP. Each list should contain an element t corresponding to
-#' the \code{n} argument in \code{rnbinom} and \code{p} corresponding to the \code{prob} argument in \code{rnbinom}.
+#' @param nb_params_dist Vector of lists of negative binomial parameters to be 
+#' sampled from to determine reads for each SNP.
+#' For each SNP, one set of these parameters are sampled, and then a negative 
+#' binomial distribution with these parameters
+#' is used to generate \code{n} read counts for each SNP. Each list should 
+#' contain an element t corresponding to
+#' the \code{n} argument in \code{rnbinom} and \code{p} corresponding to the 
+#' \code{prob} argument in \code{rnbinom}.
 #'
-#' @return A list with (1) a dataframe containing information from simulations and (2) a dataframe containing
+#' @return A list with (1) a dataframe containing information from 
+#' simulations and (2) a dataframe containing
 #' the generated signal classicification for each site
 #' @export
 #'
@@ -177,10 +198,19 @@ generate_simulated_dataset <- function(
   # Sample parameters before loop for speed
   maf_t0_freqs <- sample(x = maf_dist, size = sites, replace = TRUE)
   freq_change_list <- generate_tn_allele_cxs(
-    sites, prob_both_null, prob_hs_only, prob_c_only, prob_same, prob_amp, cx, hs_amp_coef
+    sites, 
+    prob_both_null, 
+    prob_hs_only, 
+    prob_c_only, 
+    prob_same, 
+    prob_amp, 
+    cx, 
+    hs_amp_coef
   )
   freq_change_df <- freq_change_list$cx_df
-  true_signal_df <- data.frame(site = c(1:sites), true_signal = freq_change_list$true_signal)
+  true_signal_df <- data.frame(
+    site = c(1:sites), true_signal = freq_change_list$true_signal
+  )
 
   maf_hs_tn_freqs <- maf_t0_freqs * (
     1 + freq_change_df$hs_cx
@@ -210,13 +240,24 @@ generate_simulated_dataset <- function(
 
     # Sample reads based on negative binomial distribution
     # Make sure there are never 0 reads, this should happen very rarely
-    total_reads <- pmax(1, rnbinom(n = n, size = nb_site_params[i][[1]]$t, prob = nb_site_params[i][[1]]$p))
-    alt_reads <- rbinom(n = n, size = total_reads, prob = c(genotypes_t0, genotypes_hs_tn, genotypes_c_tn))
+    total_reads <- pmax(
+      1, 
+      rnbinom(
+        n = n, size = nb_site_params[i][[1]]$t, prob = nb_site_params[i][[1]]$p
+      )
+    )
+    alt_reads <- rbinom(
+      n = n, 
+      size = total_reads, 
+      prob = c(genotypes_t0, genotypes_hs_tn, genotypes_c_tn)
+    )
 
     site_vec <- c(site_vec, rep(i, n))
     total_reads_vec <- c(total_reads_vec, total_reads)
     alt_reads_vec <- c(alt_reads_vec, alt_reads)
-    condition_vec <- c(condition_vec, rep("both", n_t0), rep("HS", n_hs_tn), rep("C", n_c_tn))
+    condition_vec <- c(
+      condition_vec, rep("both", n_t0), rep("HS", n_hs_tn), rep("C", n_c_tn)
+    )
     time_vec <- c(time_vec, rep("T0", n_t0), rep("TN", n_hs_tn + n_c_tn))
 
   }
@@ -269,10 +310,6 @@ test_generate_simulated_dataset <- function() {
   num_rows_hs <- sim_df %>% filter(condition == 'HS') %>% nrow()
   stopifnot(num_rows_hs == 50)
 
-  # Some of the tests below might have some degree of stochasticity
-  # But I think they'll be necessary to at least document in order to show the things that I'm calculating
-  # In order to make sure that the power simulation is correct
-
   sim_df2 <- generate_simulated_dataset(
     n = 500,
     sites = 250,
@@ -286,9 +323,12 @@ test_generate_simulated_dataset <- function() {
     nb_params_dist = list(list(t = 25, p = .4), list(t = 10, p = .3))
   )$sim_df
 
-  # Make sure allele frequencies don't vary accross time and condition in the all null case
+  # Make sure allele frequencies don't vary
+  # accross time and condition in the all null case
   sim_df2 <- sim_df2 %>% mutate(allele_prop = alt_reads / total_reads)
-  sim_df2_summary <- sim_df2 %>% group_by(time, condition) %>% summarize(maf = mean(allele_prop))
+  sim_df2_summary <- sim_df2 %>% 
+    group_by(time, condition) %>% 
+    summarize(maf = mean(allele_prop))
   max_diff <- max(sim_df2_summary$maf) - min(sim_df2_summary$maf)
   stopifnot(max_diff < 0.01)
 
@@ -370,25 +410,34 @@ I also built the code to run the model proposed by Pallares et al. on the simula
 ```{r}
 #' Calculate results for simulated data based on the methods of Pallares et al.
 #' 
-#' The function fits a beta-binomial regression of allele frequency on a 3-level treatment factor(T0, C TN, HS TN).
-#' Let the regression coefficient for HS TN be Bh and the regression coefficient for C TN be Bc. Let the p-value
-#' for the HS TN regression coefficient be pBh and the q-value be qBh (defined similarly for C TN). Then,
-#' for a pval thresh of .05 and a qval thresh of .1, 
-#' the function classifies each variant as either (1) a shared signal (if one of pBh or pBc < .05 and 
-#' one of qBh or qBc < .1), (2) an HS only signal (if qBh < .1 and pBc >= .05), (3) a c only signal (
-#' if qBc < .1 and pBch >= .05), or (4) null (if none of the other conditions are met).
+#' The function fits a beta-binomial regression 
+#' of allele frequency on a 3-level treatment factor(T0, C TN, HS TN).
+#' Let the regression coefficient for HS TN be Bh and the regression
+#'  coefficient for C TN be Bc. Let the p-value
+#' for the HS TN regression coefficient be pBh and the q-value be qBh 
+#' (defined similarly for C TN). Then, for a pval thresh of .05 and a qval 
+#' thresh of .1, the function classifies each variant as either 
+#' (1) a shared signal (if one of pBh or pBc < .05 and 
+#' one of qBh or qBc < .1), (2) an HS only signal (if qBh < .1 and pBc >= .05),
+#' (3) a c only signal (if qBc < .1 and pBch >= .05), 
+#' or (4) null (if none of the other conditions are met).
 #'
-#' @param sim_df Simulated dataframe in the formated produced by \code{generate_simulated_data}
+#' @param sim_df Simulated dataframe in the formated produced 
+#' by \code{generate_simulated_data}
 #' @param n Total number of individuals per site
 #' @param sites Total number of sites
-#' @param pval_thresh pvalue threshold for individual regression coefficients to declare significance in cases above.
-#' @param qval_thresh qvalue threshold for individual regression coefficients to declare significan in cases above.
+#' @param pval_thresh pvalue threshold for individual regression coefficients 
+#' to declare significance in cases above.
+#' @param qval_thresh qvalue threshold for individual regression coefficients 
+#' to declare significan in cases above.
 #'
 #' @return Dataframe with site numbers and signal classifications
 #' @export
 #'
 #' @examples
-calc_pallares_results <- function(sim_df, n, sites, pval_thresh = .05, qval_thresh = .1) {
+calc_pallares_results <- function(
+  sim_df, n, sites, pval_thresh = .05, qval_thresh = .1
+) {
 
   site_vec <- c()
   test_result_vec <- c()
@@ -402,7 +451,9 @@ calc_pallares_results <- function(sim_df, n, sites, pval_thresh = .05, qval_thre
 
     # slice instead of filter for speed
     site_df <- sim_df %>% slice(c((1 + (i - 1) * n):(i * n)))
-    bbn_model <- aod::betabin(cbind(alt_reads, total_reads - alt_reads) ~ condition, ~1, data=site_df)
+    bbn_model <- aod::betabin(
+      cbind(alt_reads, total_reads - alt_reads) ~ condition, ~1, data=site_df
+    )
     mod_sum <- aod::summary(bbn_model)
     cond_c_pval_vec[i] <- attributes(mod_sum)$Coef['conditionC', 4]
     cond_hs_pval_vec[i] <- attributes(mod_sum)$Coef['conditionHS', 4]
@@ -412,8 +463,12 @@ calc_pallares_results <- function(sim_df, n, sites, pval_thresh = .05, qval_thre
   hs_pval_test <- cond_hs_pval_vec < pval_thresh
   c_pval_test <- cond_c_pval_vec < pval_thresh
 
-  hs_qval_test <- qvalue::qvalue(p = cond_hs_pval_vec, fdr.level = qval_thresh)$significant
-  c_qval_test <- qvalue::qvalue(p = cond_c_pval_vec, fdr.level = qval_thresh)$significant
+  hs_qval_test <- qvalue::qvalue(
+    p = cond_hs_pval_vec, fdr.level = qval_thresh
+  )$significant
+  c_qval_test <- qvalue::qvalue(
+    p = cond_c_pval_vec, fdr.level = qval_thresh
+  )$significant
 
   # shared signal if the p-value < .05 in one environment and < 10% FDR in the other
   shared_test <- (hs_pval_test & c_qval_test) | (c_pval_test & hs_qval_test)
@@ -466,11 +521,51 @@ sim_df3 <- generate_simulated_dataset(
 results <- calc_pallares_results(sim_df3, 1000, 50)
 ```
 
-Additional Research to-dos Before I meet with Arbel:
+Below is a sample of the code that could be used in order to generate the distribution of minor allele frequencies. 
 
-(1) Attempt to run the lrt as a permutation test and see what I get out.
+```{r, eval=FALSE}
+# sample 5K of the sites. This number could be increased or decreased
+# note that the distinct call is necessary because there are a very small number
+# of duplicated entries
+alt <- fread('data/29Jun20_merged_alt_counts_allCHR.txt') %>%
+  distinct(site, .keep_all = TRUE) %>%
+  sample_n(5000)
+both <- fread('data/29Jun20_merged_both_counts_allCHR.txt') %>%
+  filter(site %in% alt$site) %>%
+  distinct(site, .keep_all = TRUE)
 
-(2) Demonstrate how the distribution of NB and MAF parameters can be generated using the real data. Perhaps also write the code to look at simulation results vs. true results in a table.
+alt_counts <- alt %>% select(-site) %>% rowSums()
+both_counts <- both %>% select(-site) %>% rowSums()
 
-(3) Look over this document and commit it by monday.
+alt_count_df <- data.frame(site=alt$site, alt_count = alt_counts)
+both_count_df <- data.frame(site=both$site, total_count = both_counts)
 
+count_df <- alt_count_df %>% inner_join(both_count_df, by = c("site"))
+count_df <- count_df %>% mutate(alt_freq = alt_count / total_count)
+# now, count_df$alt_freq contains a distribution over alt allele frequencies
+```
+
+Below is a sample of the code that could be used to generate the negative binomial parameters required for determining the number of reads.
+
+```{r, eval=FALSE}
+data_colnames <- colnames(both)
+variants <- data_colnames[data_colnames != 'site']
+nb_params_list <- list()
+variant_ind <- 1
+
+for(variant in variants) {
+  
+  variant_reads <- both[[variant]]
+  variant_fit <- MASS::fitdistr(
+    x = variant_reads, densfun = "negative binomial", lower = c(1, 0)
+  )
+  variant_params_list <- list(
+    t = variant_fit$estimate["size"], p = variant_fit$estimate["mu"]
+  )
+  nb_params_list[[variant_ind]] <- variant_params_list
+  variant_ind <- variant_ind + 1
+  
+}
+
+# now, nb_params_list has a set of parameters to be sampled from 
+```
