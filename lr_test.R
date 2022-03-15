@@ -14,12 +14,18 @@ shared_signif_df <- summary_table %>%
   filter(sig_cat == "shared")
 
 alt <- readRDS("rds_data/alt_shared_sig.rds")
+
 both <- readRDS("rds_data/both_shared_sig.rds")
 
 info <- read.delim('data/29Jun20_merged_sample_info.txt')
 
 variant_vec <- c()
 pval_vec <- c()
+hs_coef_vec <- c()
+hs_pval_vec <- c()
+c_coef_vec <- c()
+c_pval_vec <- c()
+
 
 for(i in c(1:nrow(alt))) {
 
@@ -39,14 +45,31 @@ for(i in c(1:nrow(alt))) {
 
   variant_vec <- c(variant_vec, alt$site[i])
   pval_vec <- c(pval_vec, lr_pval)
+  hs_coef_vec <- c(hs_coef_vec, attributes(summary(int_model))$Coef['conditionHS', 'Estimate'])
+  hs_pval_vec <- c(hs_pval_vec, attributes(summary(int_model))$Coef['conditionHS', 'Pr(> |z|)'])
+  c_coef_vec <- c(c_coef_vec, attributes(summary(int_model))$Coef['conditionC', 'Estimate'])
+  c_pval_vec <- c(c_pval_vec, attributes(summary(int_model))$Coef['conditionC', 'Pr(> |z|)'])
 
 }
 
-pval_df <- data.frame(variant = variant_vec, pval = pval_vec)
+pval_df <- data.frame(
+  variant = variant_vec,
+  lr_pval = pval_vec,
+  c_coef = c_coef_vec,
+  hs_coef = hs_coef_vec,
+  c_coef_pval = c_pval_vec,
+  hs_pval = hs_pval_vec
+)
 
 saveRDS(pval_df, "rds_data/pval_shared.rds")
 
 library(qqconf)
 
 qq_conf_plot(pval_df$pval, distribution = qunif, log10 = TRUE)
+
+summary_table <- summary_table %>%
+  inner_join(pval_df, by = c('site' = 'variant'))
+
+
+
 
