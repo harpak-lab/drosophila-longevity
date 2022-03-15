@@ -548,14 +548,12 @@ count_df <- count_df %>% mutate(alt_freq = alt_count / total_count)
 Below is a sample of the code that could be used to generate the negative binomial parameters required for determining the number of reads.
 
 ```{r, eval=FALSE}
-data_colnames <- colnames(both)
-variants <- data_colnames[data_colnames != 'site']
 nb_params_list <- list()
 variant_ind <- 1
 
-for(variant in variants) {
+for(j in c(1:nrow(both))) {
   
-  variant_reads <- both[[variant]]
+  variant_reads <- as.vector(t(both[j,-1]))
   variant_fit <- MASS::fitdistr(
     x = variant_reads, densfun = "negative binomial", lower = c(1, 0)
   )
