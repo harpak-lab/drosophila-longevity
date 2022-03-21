@@ -290,7 +290,7 @@ model_data <- generate_stan_model_data(
   n = 2000, pi_0 = .5, mu_theta = 0, sigma_theta = .25, alpha = .5
 )
 
-fit_model <- sampling(amp_mixt_mod)
+fit_model <- rstan::sampling(amp_mixt_mod)
 ```
 
 Unfortunately, this model seems to have a lot of convergence issues. This could perhaps be fixed by more informative priors or by changing modelling assumptions. One particular issue with this model is that the number of parameters grows linearly with the sample size $n$. But without a sufficiently large $n$, inferring the other parameters (especially the amplification coefficient), will be difficult. 
