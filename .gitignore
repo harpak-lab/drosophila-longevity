@@ -3,3 +3,5 @@ rds_data/
 drosophila_notes_cache/
 drosophila_notes_files/
 scratch/
+.Rhistory
+*.nb.html

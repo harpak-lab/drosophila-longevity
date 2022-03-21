@@ -7,7 +7,7 @@ set.seed(2022)
 # read in data and select relevant columns
 summary_table <- read.delim('data/SummaryTable_allsites_12Nov20.txt')
 summary_table <- summary_table %>%
-  dplyr::sample_n(1000) %>%
+  dplyr::sample_frac(.5) %>%
   dplyr::select(c(site, pval_CTRL, pval_HS, coef_CTRL, coef_HS, sig_cat))
 
 # replace 0 p-values with small numbers
@@ -97,7 +97,7 @@ make_amp_cov_mat <- function(
 }
 
 desired_corrs <- seq(from = -1, to = 1, by = .25)
-desired_amp <- c(3, 2, 1.5)
+desired_amp <- c(1.5, 1.2, 1.1)
 
 for(corr in desired_corrs) {
 
@@ -128,3 +128,13 @@ mash_out <- mashr::mash(
 
 cov_mat_ests <- mashr::get_estimated_pi(mash_out)
 
+#lfsr_ests <- ashr::get_lfsr(mash_out)
+
+cov_mat_ests <- readr::read_rds(
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/half_cov_v2.rds"
+)
+
+readr::write_rds(
+  cov_mat_ests,
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/half_cov_v2.rds"
+)
