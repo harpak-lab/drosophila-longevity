@@ -1,0 +1,553 @@
+---
+title: "Week 4 Work"
+author: "Eric Weine"
+date: "3/24/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+set.seed(1919)
+'%>%' <- dplyr::'%>%'
+library(ggplot2)
+library(rstan)
+```
+
+## Revisiting MASH 
+
+After finding the output of MASH very strange, I wanted to revisit the code used to get the mash output. I noticed a bug in the original code where I was not feeding in the data matrices correctly. The fixed code is shown below:
+
+```{r, eval=FALSE}
+#' Create 2x2 covariance matrices with optional levels of amplification
+#'
+#' The function assumes that we have two groups, with the standard deviation of
+#' the effect size in one group being 1, and the standard deviation of the effect
+#' size in the other group being \code{1 * amp_coef} if \code{amp} is set to
+#' \code{TRUE}
+#'
+#' @param desired_corr Desired level of correlation. Must be in [-1, 1].
+#' @param amp_coef Coefficient of amplification, as described above.
+#' @param amp Boolean indicating if any amplificaiton should take place
+#' @param amp_hs Boolean indicating if amplification should take place in the hs
+#' group or in the c group. Only used if \code{amp} is set to \code{TRUE}.
+#'
+#' @return 2x2 covariance matrix
+#' @export
+#'
+#' @examples
+make_amp_cov_mat <- function(
+  desired_corr, amp_coef = 1, amp = TRUE, amp_hs = TRUE
+) {
+
+  if (amp_hs && amp) {
+
+    ctrl_sd <- 1
+    hs_sd <- ctrl_sd * amp_coef
+
+  } else if(!amp_hs && amp) {
+
+    hs_sd <- 1
+    ctrl_sd <- hs_sd * amp_coef
+
+  } else {
+
+    hs_sd <- 1
+    ctrl_sd <- 1
+
+  }
+
+  # derive covariance from correlation and sds
+  cov_hs_ctrl <- desired_corr * hs_sd * ctrl_sd
+
+  cov_mat <- matrix(
+    data = c(ctrl_sd ^ 2, cov_hs_ctrl, cov_hs_ctrl, hs_sd ^ 2),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      rows = c("ctrl", "hs"), cols = c("ctrl", "hs")
+    )
+  )
+
+  return(cov_mat)
+
+}
+
+# read in 50% of data and select relevant columns
+summary_table <- read.delim('data/SummaryTable_allsites_12Nov20.txt')
+summary_table_samp <- summary_table %>%
+  dplyr::sample_frac(.5) %>%
+  dplyr::select(c(site, pval_CTRL, pval_HS, coef_CTRL, coef_HS, sig_cat))
+
+# replace 0 p-values with small numbers
+summary_table_samp <- summary_table_samp %>%
+  dplyr::mutate(
+    pval_CTRL = pmax(.00000000001, pval_CTRL),
+    pval_HS = pmax(.00000000001, pval_HS)
+  )
+
+# construct std error estimates from coefficients and p-values
+summary_table_samp <- summary_table_samp %>%
+  dplyr::mutate(
+    std_error_ctrl = abs(coef_CTRL) / qnorm((2 - pval_CTRL) / 2),
+    std_error_hs = abs(coef_HS) / qnorm((2 - pval_HS) / 2)
+  )
+
+reg_fx_mat <- t(matrix(
+  data = c(summary_table_samp$coef_CTRL, summary_table_samp$coef_HS),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_fx_mat) <- c("ctrl", "hs")
+
+reg_se_mat <- t(matrix(
+  data = c(summary_table_samp$std_error_ctrl, summary_table_samp$std_error_hs),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_se_mat) <- c("ctrl", "hs")
+
+mash_data <- mashr::mash_set_data(reg_fx_mat, reg_se_mat)
+
+# Now, want to construct covariance matrices to feed into mash
+cov_mat_list <- list()
+
+cov_mat_list[['no_effect']] <- matrix(
+  data = rep(0, 4), nrow = 2, dimnames = list(
+    rows = c("ctrl", "hs"), cols = c("ctrl", "hs")
+  )
+)
+
+cov_mat_list[['hs_spec']] <- matrix(
+  data = c(0, 0, 0, 1), nrow = 2, byrow = TRUE, dimnames = list(
+    rows = c("ctrl", "hs"), cols = c("ctrl", "hs")
+  )
+)
+
+cov_mat_list[['ctrl_spec']] <- matrix(
+  data = c(1, 0, 0, 0), nrow = 2, byrow = TRUE, dimnames = list(
+    rows = c("ctrl", "hs"), cols = c("ctrl", "hs")
+  )
+)
+
+desired_corrs <- seq(from = -1, to = 1, by = .25)
+desired_amp <- c(3, 2, 1.5)
+
+for(corr in desired_corrs) {
+
+  cov_mat_list[[glue::glue('equal_corr_{corr}')]] <- make_amp_cov_mat(
+    desired_corr = corr, amp = FALSE
+  )
+
+  for(cond in c("hs", "ctrl")) {
+
+    for(amp in desired_amp) {
+
+      cov_mat_list[[glue::glue('{cond}_amp_{amp}_corr_{corr}')]] <- make_amp_cov_mat(
+        desired_corr = corr, amp_hs = (cond == "hs"), amp_coef = amp
+      )
+
+    }
+
+  }
+
+}
+
+mash_out <- mashr::mash(
+  data = mash_data,
+  Ulist = cov_mat_list,
+  algorithm.version = "Rcpp",
+  outputlevel = 1
+)
+
+cov_mat_ests <- mashr::get_estimated_pi(mash_out)
+```
+
+```{r, include=FALSE}
+cov_mat_ests <- readr::read_rds(
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/cov_mat_ests_half_v2.rds"
+)
+```
+
+
+The fitted weights on the covariance matrices are shown below:
+
+```{r}
+print(cov_mat_ests[cov_mat_ests > 1e-4])
+```
+
+While then weight on the null covariance matrix is still surprisingly low, the other estimates make much more sense. Most signals are equal between the two environments, but around 22% of signals are suggested to have a higher magnitude effect in the high sugar environment than the control environment. This matches what I saw in week 1 when I looked at the density plots of the regression coefficients.
+
+Still unsatisfied with the weight on the null matrix, I wanted to try using mash's "nullbiased" prior option. This option penalizes the likelihood for non-zero effects. I imagine this is a penalty on the L1 norm of the fitted effects, though I cannot find any specific documentation on this, so it may be worth checking into.
+
+```{r, eval=FALSE}
+mash_out_nb <- mashr::mash(
+  data = mash_data,
+  Ulist = cov_mat_list,
+  algorithm.version = "Rcpp",
+  outputlevel = 1,
+  prior = "nullbiased"
+)
+
+cov_mat_ests_nb <- mashr::get_estimated_pi(mash_out_nb)
+```
+
+```{r, include=FALSE}
+cov_mat_ests_nb <- readr::read_rds(
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/cov_mat_ests_half_nullb_v2.rds"
+)
+```
+
+The fitted weights on the covariance matrices are shown below:
+
+```{r}
+print(cov_mat_ests_nb[cov_mat_ests_nb > 1e-4])
+```
+
+
+Strangely it seems that the nullbiased results are exactly the same as the standard results. I'm guessing that because there is so much data any penalty is completely overwhelmed, but I'm not completely sure.
+
+Another aspect of MASH that I wanted to look at was the lfsr estimates of the fitted effects. If the lfsr is high for many of the fitted effects, then this would indicate that even though the weight on the null matrix is very low, there are many SNPs that mash beleives may have a sign of the opposite effect (which in reality could indicate that they are null or very close to null). To prevent running out of RAM, I had to fit the model with only $\frac{1}{4}$th of the data. 
+
+```{r, eval=FALSE}
+summary_table_samp <- summary_table_samp %>%
+  dplyr::sample_frac(.5)
+
+reg_fx_mat <- t(matrix(
+  data = c(summary_table_samp$coef_CTRL, summary_table_samp$coef_HS),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_fx_mat) <- c("ctrl", "hs")
+
+reg_se_mat <- t(matrix(
+  data = c(summary_table_samp$std_error_ctrl, summary_table_samp$std_error_hs),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_se_mat) <- c("ctrl", "hs")
+
+mash_data <- mashr::mash_set_data(reg_fx_mat, reg_se_mat)
+
+mash_out <- mashr::mash(
+  data = mash_data,
+  Ulist = cov_mat_list,
+  algorithm.version = "Rcpp",
+  outputlevel = 2,
+  prior = "nullbiased"
+)
+
+lfsr_ests <- ashr::get_lfsr(mash_out)
+```
+
+```{r, include=FALSE}
+lfsr_ests <- readr::read_rds(
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/lfsr_ests_quarter_nullb_v2.rds"
+)
+```
+
+
+The density of the lfsr estimates for the CTRL and HS groups are shown below. While these two plots look exactly the same, the lfsr estimates in mash between the two groups are not exactly equivalent.
+
+```{r}
+plot(
+  density(lfsr_ests[,'ctrl'], from = 0, to = 0.5),
+  main = "Density of CTRL lfsr", 
+  ylim = c(0, 4.5)
+)
+plot(
+  density(lfsr_ests[,'hs'], from = 0, to = 0.5), 
+  main = "Density of HS lfsr", 
+  ylim = c(0, 4.5)
+)
+```
+
+While the mode of these distributions is relatively close to 0, there are quite a few effects with very high lfsrs. It seems that for many of the signals we would expect to be null, mash is fitting them as non-null effects with high lfsrs.
+
+### Sampling LD Blocks and Assessing Uncertainty in MASH
+
+One area of concern with fitting genetic data with MASH is that the level of correlation between SNPs is very high. One potential solution to this is to create separate LD blocks and sample one SNP from each of these LD blocks and then fit mash. Originally, Arbel suggested dividing the data into mega base pair blocks. The code to do this is shown below:
+
+```{r, eval=FALSE}
+summary_table_ld <- read.delim('data/SummaryTable_allsites_12Nov20.txt') %>%
+  dplyr::select(c(site))
+
+sites_df <- data.frame(stringr::str_split_fixed(summary_table_ld$site, ":", 2))
+colnames(sites_df) <- c("chromosome", "site_id")
+sites_df <- sites_df %>%
+  dplyr::mutate(site_id = as.numeric(site_id))
+
+# split into blocks of a certain length
+split_into_LD_blocks <- function(df, block_length) {
+
+  block_range <- seq(from = min(df$site_id), to = max(df$site_id), by = block_length)
+  df %>%
+    dplyr::mutate(block_id = plyr::laply(site_id, function(x) sum(x > block_range)))
+
+}
+
+# group by chromosome and then split into blocks
+sites_df <- sites_df %>%
+  dplyr::group_by(chromosome) %>%
+  dplyr::group_modify(~ split_into_LD_blocks(.x, 1e6))
+
+total_blocks <- sites_df %>% dplyr::distinct(chromosome, block_id) %>% nrow()
+```
+
+Unfortunately, based on the number of SNPs available in this dataset, this method only creates 144 LD blocks, which does not seem like enough to fit complex models. While the authors do seem to do some LD control by eliminating some SNPs before analysis, it seems that this control could be insufficient.
+
+Finally, I was thinking about potential bootstrapping methods for assessing uncertainty in mash weights on covariance matrices. One potential method would be to sample one SNP from each LD block repeatedly, fit the mash model, and then look at the distribution of fitted weights. I believe that this method will likely work for most datasets. However, if the correlation between effects within each LD block is extremely high, this might underestimate uncertainty in the fitted weights. Instead, it might be better to sample some set of LD blocks, then sample one SNP from each block, and then fit the model. This would effectively simulate sampling data from a population even if the effects in each LD block were perfectly correlated in the dataset.
+
+## Revising the STAN Model and Fitting it to the Drosophila Dataset
+
+Recall from last week the following model:
+
+Assume that we have SNPs labelled $1, ..., n$, where SNP $i$ has true effect $\theta_{i}$. Then, assume each value of $\theta$ is drawn independently as 
+
+\begin{equation*}
+\theta_{1}, ..., \theta_{n} \sim N(\mu_{\theta}, \sigma_{\theta}^{2}),
+\end{equation*}
+
+where we put flat, uninformative priors on $\mu_{\theta}$ and $\sigma_{\theta}^{2}$.
+
+Then, assume we have observations $h_{1}, ..., h_{n}$ in the high sugar group with standard errors $s_{1h}, ..., s_{nh}$, and observations $c_{1}, ..., c_{n}$ with standard errors $s_{1c}, ..., s_{nc}$. We also assume there exists an amplification coefficient $\alpha$ for the effect in the high sugar group, which we give a flat, uninformative prior. Then, we have the following sampling statements:
+
+\begin{align*}
+c_{i} &\sim N(\theta_{i}, s_{ic}^{2})\\
+h_{i} &\sim \pi_{0}N(\theta_{i}, s_{ih}^{2}) +  (1-\pi_{0})N((1 + \alpha)\theta_{i}, s_{ih}^{2})
+\end{align*}
+
+Where $\pi_{0}$ is a mixture component (with an uninformative prior) indicating the probability of drawing an $h_{i}$ without amplification.
+
+One issue with this model is that the number of $\theta$ parameters is equal to the size of the dataset $n$, which makes sampling slow and less likely to converge. However, if we are not interested in estimating the posterior distribution of the $\theta$ parameters, then we can marginalize them out, as we are simply adding two normal random variables together. Thus, the model above is equivalent to
+
+\begin{align*}
+c_{i} &\sim N(\mu_{\theta}, s_{ic}^{2} + \sigma_{\theta}^{2})\\
+h_{i} &\sim \pi_{0}N(\mu_{\theta}, s_{ih}^{2} + \sigma_{\theta}^{2}) +  (1-\pi_{0})N((1 + \alpha)\mu_{\theta}, s_{ih}^{2} + (1 + \alpha)^{2}\sigma_{\theta}^{2})
+\end{align*}
+
+This model is written in STAN as follows:
+
+```{stan output.var="mixt_amp_mod",}
+data {
+ int < lower = 1 > N; // Sample size
+ vector[N] h; // high sugar measured effects
+ vector[N] c; // control measured effects
+ vector<lower = 0>[N] s_h; // high sugar se
+ vector<lower = 0>[N] s_c; // control se
+}
+
+parameters {
+
+ real<lower = 0, upper = 1> pi_0; // Mixture model proportion
+ //vector[N] theta; // vector of mean parameters
+ real mu_theta; // mean of theta parameters
+ real<lower = 0> sigma_theta; // sd of the theta parameters
+ real alpha; // amplification coefficient
+
+}
+
+model {
+
+ pi_0 ~ beta(1, 2);
+ mu_theta ~ normal(0, sqrt(10));
+ sigma_theta ~ normal(0, sqrt(5));
+ alpha ~ normal(0, sqrt(5));
+
+ c ~ normal(mu_theta, sqrt(square(s_c) + square(sigma_theta)));
+
+ for(i in 1:N) {
+
+   target += log_sum_exp(
+   log(pi_0) +
+   normal_lpdf(h[i] | 
+     mu_theta, 
+     sqrt(square(s_h[i]) + square(sigma_theta))),
+   log(1 - pi_0) +
+   normal_lpdf(h[i] | 
+     (1 + alpha) * mu_theta, 
+     sqrt(square(s_h[i]) + square(1 + alpha) * square(sigma_theta))));
+
+ }
+
+}
+```
+
+When testing this model on simulated data (see week 3 code for how to simulate the data), I got much better results, where the chains consistently converged to the true parameter values. I did have to tighten the priors in this model slightly, but I still believe that they are reasonable and relatively flat in the feasible area of parameters. 
+
+I then fit this model to the Drosophila dataset. It would be computationally infeasible to do this with the entire dataset, so I decided only to sample SNPs that the author's analysis labelled as significant in at least one environment. 
+
+```{r, eval=FALSE}
+summary_table_stan <- summary_table %>%
+  dplyr::filter(sig_cat != 'NS') %>%
+  dplyr::select(c(site, pval_CTRL, pval_HS, coef_CTRL, coef_HS, sig_cat))
+
+# replace 0 p-values with small numbers
+summary_table_stan <- summary_table_stan %>%
+  dplyr::mutate(
+    pval_CTRL = pmax(.000000000001, pval_CTRL),
+    pval_HS = pmax(.000000000001, pval_HS)
+  )
+
+# construct std error estimates from coefficients and p-values
+summary_table_stan <- summary_table_stan %>%
+  dplyr::mutate(
+    std_error_ctrl = abs(coef_CTRL) / qnorm((2 - pval_CTRL) / 2),
+    std_error_hs = abs(coef_HS) / qnorm((2 - pval_HS) / 2)
+  )
+
+dros_stan_data <- list(
+  N = nrow(summary_table_stan),
+  h = summary_table_stan$coef_HS,
+  c = summary_table_stan$coef_CTRL,
+  s_h = summary_table_stan$std_error_hs,
+  s_c = summary_table_stan$std_error_ctrl
+)
+
+fitted_model <- rstan::sampling(
+  mixt_amp_mod,
+  data = dros_stan_data,
+  warmup = 6000,
+  iter = 12000,
+  cores = 4
+)
+
+posterior_dist <- rstan::extract(fitted_model)
+```
+
+```{r, include=FALSE}
+posterior_dists <- readr::read_rds(
+  "~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/stan_dros_post.rds"
+)
+```
+
+However, this model seems to have trouble converging, which seems to indicate that the model may not fit the data particularly well. I'm guessing that this is driven by the mixture component, as the posterior distribution appears to be bimodal. Over the next day / week I will continue to explore more informative prior distributions that may assist in convergence. However, at a certain point the priors will become so informative that the impartiality of the analysis has to come into question.
+
+```{r}
+plot(density(posterior_dists$pi_0, from = 0, to = 1), main = "Posterior Dist of pi0")
+```
+
+
+## Evaluation of Correlation Between Interaction Term and Time Coefficient
+
+Finally, I wanted to look into the correlation between the fitted interaction term and time coefficient in the interaction model. I first loaded in and merged the data from Rebecca. 
+
+```{r read_data, cache=TRUE, results=FALSE, message=FALSE, warning=FALSE}
+int_model_coefs <- readr::read_delim(
+  file = paste0("~/Documents/academic/drosophila_longevity/drosophila-longevity/",
+                "data/ALL_int_model_coefs.txt"),
+  skip = 1,
+  col_names = FALSE
+)
+
+colnames(int_model_coefs) <- c(
+  "variant_id", "coef_intercept", "coef_time_TN", "coef_time_TN_int_HS",
+  "coef_seq_batch", "coef_meta_cage", "coef_sex"
+)
+
+int_model_coefs <- int_model_coefs %>%
+  dplyr::select(c(variant_id, coef_time_TN, coef_time_TN_int_HS))
+
+int_model_pvals <- readr::read_delim(
+  file = paste0("~/Documents/academic/drosophila_longevity/drosophila-longevity/",
+                "data/ALL_int_model_pvals.txt"),
+  skip = 1,
+  col_names = FALSE
+)
+
+colnames(int_model_pvals) <- c(
+  "variant_id", "pval_intercept", "pval_time_TN", "pval_time_TN_int_HS",
+  "pval_seq_batch", "pval_meta_cage", "pval_sex"
+)
+
+int_model_pvals <- int_model_pvals %>%
+  dplyr::select(c(variant_id, pval_time_TN, pval_time_TN_int_HS))
+
+int_model_se <- readr::read_delim(
+  file = paste0("~/Documents/academic/drosophila_longevity/drosophila-longevity/",
+         "data/ALL_int_model_se.txt"),
+  skip = 1,
+  col_names = FALSE
+)
+
+colnames(int_model_se) <- c(
+  "variant_id", "se_intercept", "se_time_TN", "se_time_TN_int_HS",
+  "se_seq_batch", "se_meta_cage", "se_sex"
+)
+
+int_model_se <- int_model_se %>%
+  dplyr::select(c(variant_id, se_time_TN, se_time_TN_int_HS))
+
+int_model_df <- int_model_coefs %>%
+  dplyr::inner_join(int_model_pvals, by = "variant_id") %>%
+  dplyr::inner_join(int_model_se, by = "variant_id")
+```
+
+First, I plotted the coefficients across all datapoints.
+
+```{r, cache=TRUE, include=FALSE}
+# first, look at the correlation without subsetting data based on p-vals
+ggplot(int_model_df, mapping = aes(x = coef_time_TN, y = coef_time_TN_int_HS)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  ggtitle("cor = 3.4%")
+```
+
+Clearly, there is a slight correlation between the coefficient on time and the interaction term. This would provide evidence for some sort of an amplification effect. 
+
+However, I'm not sure if it makes sense to view all SNPs together or if it would make sense to subset them based on the p-values output from the model. Specifically, it would also be interesting to look at the correlation of coefficients for some subset of "significant" SNPs, where at least one (or both) of the coefficients passes some liberal definition of "significant."
+
+```{r}
+int_model_signif_df <- int_model_df %>%
+  dplyr::filter(pval_time_TN < .05 & pval_time_TN_int_HS < .05)
+```
+
+Now, we'll re-examine the plot.
+
+```{r, cache=TRUE}
+ggplot(int_model_signif_df, mapping = aes(x = coef_time_TN, y = coef_time_TN_int_HS)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "lm") +
+  ggtitle("cor = -5.2%")
+```
+I'm not sure I really believe that this negative correlation coefficient is reliable, especially because requiring both effects to be "significant" imposes a very particular structure on the data.
+
+
+It would perhaps be interesting to also look at this plot in the case that at least one of the coefficients is "significant".
+
+```{r}
+int_model_signif_df3 <- int_model_df %>%
+  dplyr::filter(pval_time_TN < .05 | pval_time_TN_int_HS < .05)
+```
+
+Now, we have a very high correlation, which is expected.
+
+```{r}
+ggplot(int_model_signif_df3, mapping = aes(x = coef_time_TN, y = coef_time_TN_int_HS)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "lm") +
+  ggtitle("cor = 17.2%")
+```
+This coheres much more closely with the amplification hypothesis. However, excluding the subset of data around 0 still makes me a bit uncomfortable (though it's probably fine).
+
+One other possible method of analysis would involve taking a weighted correlation, where we look at the entire dataset but weight each observation by the inverse of the sum of the variances on the two relevant coefficients. 
+
+```{r}
+int_model_df <- int_model_df %>%
+  dplyr::mutate(weight = 1 / (se_time_TN ^ 2 + se_time_TN_int_HS ^ 2))
+```
+
+```{r}
+weights::wtd.cors(
+  x = int_model_df$coef_time_TN_int_HS, 
+  y = int_model_df$coef_time_TN,
+  weight = int_model_df$weight
+)
+```
+
+The correlation seems about the same here as in the overall dataset. 
+
+So, overall it seems that the interaction model does lend some amount of credence to the amplification hypothesis. However, I'm not really sure the best way to subset the data to test this hypothesis. Once we determine this precisely, I think that it would also be good to construct a permutation test where we shuffle the interaction term to get a null distribution for the correlation coefficient. This would allow us to more precisely assess the magnitude of the correlation between the coefficients. 
+
