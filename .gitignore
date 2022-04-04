@@ -5,3 +5,6 @@ drosophila_notes_files/
 scratch/
 .Rhistory
 *.nb.html
+*_cache
+*_files
+.Rproj.user
