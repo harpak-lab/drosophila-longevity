@@ -7,3 +7,4 @@ scratch/
 *.nb.html
 *_cache
 *_files
+.Rproj.user
