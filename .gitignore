@@ -8,3 +8,4 @@ scratch/
 *_cache
 *_files
 *.Rproj*
+.Rproj.user

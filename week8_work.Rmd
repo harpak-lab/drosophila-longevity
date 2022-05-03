@@ -1,0 +1,529 @@
+---
+title: "Week 8 Work"
+author: "Eric Weine"
+date: "4/25/2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+set.seed(1)
+library(ggplot2)
+'%>%' <- dplyr::'%>%'
+```
+
+## Demonstration of Equivalence Between Interaction and Separate Models
+
+First, let's simulate data under two environments.
+
+```{r}
+n_env0 <- 100
+n_env1 <- 150
+maf <- .25 # minor allele frequency
+gfx_env0 <- .5 # effect of one minor allele copy in environment 0
+gfx_env1 <- .75 # effect of one minor allele copy in environment 1
+obs_sd <- sqrt(5) # standard deviation of normal observation noise
+
+# generate genotypes for env0
+g_env0 <- sample(
+  x=c(0, 1, 2),
+  size=n_env0,
+  prob=c((1 - maf) ^ 2, 2 * maf * (1 - maf), maf ^ 2),
+  replace = TRUE
+)
+
+# generate genotypes for env1
+g_env1 <- sample(
+  x=c(0, 1, 2),
+  size=n_env1,
+  prob=c((1 - maf) ^ 2, 2 * maf * (1 - maf), maf ^ 2),
+  replace = TRUE
+)
+
+# generate quantitative trait with white noise
+y_env0 <- gfx_env0 * g_env0 + rnorm(n = n_env0, sd = obs_sd)
+y_env1 <- gfx_env1 * g_env1 + rnorm(n = n_env1, sd = obs_sd)
+
+env <- c(rep("env0", n_env0), rep("env1", n_env1))
+
+# dataframe for all data
+df <- data.frame(
+  g = c(g_env0, g_env1),
+  y = c(y_env0, y_env1),
+  env = env
+)
+
+# divide dataframes up by environment
+df_env0 <- df %>%
+  dplyr::filter(env == "env0")
+
+df_env1 <- df %>%
+  dplyr::filter(env == "env1")
+```
+
+Now, we will estimate 3 different linear regressions. Two of them are separate models for each environment, and one of them is an interaction model. I claim that the coefficients from the interaction model match with the coefficients from the separate models **exactly**. 
+
+First, the interaction model:
+
+```{r}
+lm_int <- lm(y ~ g + env + g:env, data = df)
+summary(lm_int)
+```
+
+Here, we can see that the coefficient on g (or the estimated genetic effect in environment 0) is -0.001976, and the estimated effect of g on environment 1 is g + g:envenv1 = -0.001976 + 1.025155 = 1.023179. Finally, the estimated effect of environment 1 is -0.211892.
+
+Now, we will compare these estimates with separate models.
+
+First, we estimate a linear model only in environment 0.
+
+```{r}
+lm_env0 <- lm(y ~ g, data = df_env0)
+summary(lm_env0)
+```
+Now, only in environment 1.
+
+```{r}
+lm_env1 <- lm(y ~ g, data = df_env1)
+summary(lm_env1)
+```
+
+So, we see an exact match in the coefficients. From the linear model estimated in environment 0, we have the effect of g as -0.001976. In environment 1, we have the estimated genetic effect as 1.02318 (which is off only by a rounding error from the interaction model). Finally, we can derive the effect of environment 1 by subtracting the intercept in the environment 0 model from the environment 1 model. In this case we get -0.08182 - 0.130070 = -0.21189. Once again an exact match.
+
+The intuition for this is that in an interaction model with a binary interaction variable, we are really just estimating completely separate coefficients for the genetic effect in environment 0 and environment 1. There is no information sharing. If there were additional covariates that were thought not to differ by environment, then estimating separate models would be less efficient than estimating an interaction model, because there is information sharing between the two environments. Moreover, while the estimated standard errors differ between the two models above, there is no actual difference in the estimation error of the two models. Clearly, if two estimators give the exact same estimate each time, their actual estimation errors must be equivalent. 
+
+Given that we know that interaction models and separate models are equivalent, the question arises about when we should estimate effects separately in two environments vs. when we should estimate them together (note that there is a third option which is somewhere in between. This is similar to the James-Stein estimator, and something to investigate).
+
+## Comparing Estimation of Separate Models Vs. Estimation of 1 Model
+
+Because we're just considering univariate regressions, it is simpler mathematically to just consider this problem in the context of the estimation of means. So, suppose we have
+
+\begin{align*}
+X_{1} &\sim N(\theta_{1}, \sigma^{2}) \\
+X_{2} &\sim N(\theta_{2}, \sigma^{2})
+\end{align*}
+
+where $\sigma^{2}$ is known and $\theta_{1}$ and $\theta_{2}$ are unknown. We can consider two different estimators for the vector $(\theta_{1}, \theta_{2})$.
+
+Pooled: $(\hat{\theta}_{1}, \hat{\theta}_{2}) = \Big(\frac{X_{1} + X_{2}}{2}, \frac{X_{1} + X_{2}}{2}\Big)$, which would be the MLE if we assumed $\theta_{1} = \theta_{2}$.
+
+Separate: $(\hat{\theta}_{1}, \hat{\theta}_{2}) = (X_{1}, X_{2})$, the separate MLE for $\theta_{1}$ and $\theta_{2}$.
+
+Now, the question is under what conditions does it make sense to use the pooled estimate instead of the separate estimate. To determine this, we will examine the mean-squared error of both estimators.
+
+Suppose we estimate $\hat{\theta}_{i}$ as $X_{i}$. Then, 
+
+\begin{align*}
+MSE(\hat{\theta}_{i}, \theta_{i}) &= Bias(\hat{\theta}_{i}, \theta_{i})^{2} + Var(\hat{\theta}_{i})\\
+&= (E[X_{i}] - \theta_{i})^{2} + Var(X_{i})\\
+&= \sigma^{2}
+\end{align*}
+
+Thus, $MSE((X_{1}, X_{2}), (\theta_{1}, \theta_{2})) = 2\sigma^{2}$
+
+Now, consider estimating $\hat{\theta}_{1}$ as $\frac{X_{1} + X_{2}}{2}$. Then,
+
+\begin{align*}
+MSE(\hat{\theta}_{1}, \theta_{1}) &= Bias(\hat{\theta}_{1}, \theta_{1})^{2} + Var(\hat{\theta}_{i})\\
+&= (E\Big[\frac{X_{1} + X_{2}}{2}\Big] - \theta_{1})^{2} + Var(\frac{X_{1} + X_{2}}{2})\\
+&= \frac{(\theta_{2} - \theta_{1})^{2}}{4} + \frac{\sigma^{2}}{2}
+\end{align*}
+
+Thus, $MSE\Bigg(\Big(\frac{X_{1} + X_{2}}{2}, \frac{X_{1} + X_{2}}{2}\Big), (\theta_{1}, \theta_{2})\Bigg) = \frac{(\theta_{2} - \theta_{1})^{2}}{2} + \sigma^{2}$
+
+We should use the pooled estimator when it has lower mean squared error, or when 
+
+\begin{equation*}
+(\theta_{2} - \theta_{1}) ^{2} < 2\sigma^{2}
+\end{equation*}
+
+Below is a plot of the difference in mean squared errors of the two estimators over varying values of differences in mean and standard deviations.
+
+```{r, echo=FALSE}
+# make a grid plot to demonstrate this
+theta_diff <- seq(from = 0, to = 4.25, by = .005)
+sigma <- seq(from = 0, to = 3, by = .005)
+df <- expand.grid(theta_diff, sigma)
+colnames(df) <- c("theta_diff", "sigma")
+df <- df %>%
+  dplyr::mutate(
+    mse_diff = theta_diff ^ 2 - 2 * (sigma ^ 2)
+  )
+library(ggplot2)
+ggplot(data = df, aes(x = theta_diff, y = sigma, fill = mse_diff)) +
+  geom_tile() +
+  scale_fill_gradient2()
+```
+
+The values in red indicate when we should use a pooled estimator, and the values in blue indicate when we should use a separate estimator. 
+The math will not work out very cleanly in the regression context, but this estimation of normal means is a helpful theoretical exercise. Below, we simulate gwas data from two environments and compare the accuracy of the estimated genetic effects in two environments depending on the true difference in effects and the variance of each datapoint. 
+
+```{r}
+simulate_two_env_df <- function(
+  n_e0,
+  n_e1,
+  sigma_e0,
+  sigma_e1,
+  fx_e0,
+  fx_e1,
+  maf = .4
+) {
+  
+  g_e0 <- sample(
+    x=c(0, 1, 2),
+    size=n_e0,
+    prob=c((1 - maf) ^ 2, 2 * maf * (1 - maf), maf ^ 2),
+    replace = TRUE
+  )
+  
+  g_e1 <- sample(
+    x=c(0, 1, 2),
+    size=n_e1,
+    prob=c((1 - maf) ^ 2, 2 * maf * (1 - maf), maf ^ 2),
+    replace = TRUE
+  )
+  
+  y_e0 <- g_e0 * fx_e0 + rnorm(n = n_e0, sd = sigma_e0)
+  y_e1 <- g_e1 * fx_e1 + rnorm(n = n_e1, sd = sigma_e1)
+  
+  sim_df <- data.frame(
+    y = c(y_e0, y_e1),
+    g = c(g_e0, g_e1),
+    e = c(rep("e0", n_e0), rep("e1", n_e1))
+  )
+  
+  return(sim_df)
+  
+}
+
+simulate_mse_two_env <- function(
+  n_individuals,
+  fx_diff_grid,
+  sigma_grid,
+  sims_per_grid_pt = 30
+) {
+  
+  sim_grid <- expand.grid(fx_diff_grid, sigma_grid)
+  colnames(sim_grid) <- c("fx_diff", "sigma")
+  
+  mse_diff_vec <- numeric(nrow(sim_grid))
+  
+  for (i in 1:nrow(sim_grid)) {
+    
+    sim_fx_diff <- sim_grid$fx_diff[i]
+    sim_sigma <- sim_grid$sigma[i]
+    
+    fx_e0 <- 0
+    fx_e1 <- sim_fx_diff
+    
+    avg_mse_diff <- 0
+    
+    for (j in 1:sims_per_grid_pt) {
+      
+      sim_df <- simulate_two_env_df(
+                                  n_e0 = n_individuals,
+                                  n_e1 = n_individuals,
+                                  sigma_e0 = sim_sigma,
+                                  sigma_e1 = sim_sigma,
+                                  fx_e0 = fx_e0,
+                                  fx_e1 = fx_e1
+                                )
+      
+      lm_comb <- lm(y ~ g, data = sim_df)
+      g_est_comb <- coef(summary(lm_comb))['g', 'Estimate']
+      
+      lm_e0 <- lm(y ~ g, data = sim_df, subset = (e == "e0"))
+      g_e0_est <- coef(summary(lm_e0))['g', 'Estimate']
+      
+      lm_e1 <- lm(y ~ g, data = sim_df, subset = (e == "e1"))
+      g_e1_est <- coef(summary(lm_e1))['g', 'Estimate']
+      
+      mse_comb <- (g_est_comb - fx_e0) ^ 2 + (g_est_comb - fx_e1) ^ 2
+      mse_sep <- (g_e0_est - fx_e0) ^ 2 + (g_e1_est - fx_e1) ^ 2
+      mse_diff <- mse_comb - mse_sep
+      avg_mse_diff <- avg_mse_diff + (1 / sims_per_grid_pt) * mse_diff
+      
+    }
+    
+    mse_diff_vec[i] <- avg_mse_diff
+    
+  }
+  
+  sim_grid$mse_diff <- mse_diff_vec
+  
+  return(sim_grid)
+  
+}
+
+```
+
+
+```{r, eval=FALSE}
+sim_test <- simulate_mse_two_env(
+  n_individuals = 50,
+  fx_diff_grid = seq(from = 0, to = 1, by = .009),
+  sigma_grid = seq(from = .05, to = sqrt(6), by = .02)
+)
+```
+
+```{r, include=FALSE}
+sim_test <- readr::read_rds("~/Documents/academic/drosophila_longevity/drosophila-longevity/rds_data/sim_reg_test.rds")
+```
+
+Below is a grid of the results. It does not look quite as smooth because I only ran 30 regressions for each grid point, which is not enough to get an excellent estimate of the MSE difference. However, this plot confirms the theoretical result above. 
+
+```{r, echo=FALSE}
+ggplot(data = sim_test, aes(x = fx_diff, y = sigma, fill = mse_diff)) +
+  geom_tile() +
+  scale_fill_gradient2()
+```
+
+I'm not sure how useful this is because I don't know what on what scales the effect difference and standard deviation should vary on, but I think this is on the right track. 
+
+# Pallares Classification
+
+```{r, include=FALSE}
+summary_table <- read.delim('data/SummaryTable_allsites_12Nov20.txt')
+
+# replace 0 p-values with small numbers
+summary_table <- summary_table %>%
+  dplyr::select(c(site, pval_CTRL, pval_HS, coef_CTRL, coef_HS, sig_cat)) %>%
+  dplyr::mutate(
+    pval_CTRL = pmax(.00000000001, pval_CTRL),
+    pval_HS = pmax(.00000000001, pval_HS)
+  )
+
+# construct std error estimates from coefficients and p-values
+summary_table <- summary_table %>%
+  dplyr::mutate(
+    std_error_ctrl = abs(coef_CTRL) / qnorm((2 - pval_CTRL) / 2),
+    std_error_hs = abs(coef_HS) / qnorm((2 - pval_HS) / 2)
+  )
+
+sites_df <- data.frame(stringr::str_split_fixed(summary_table$site, ":", 2))
+colnames(sites_df) <- c("chromosome", "site_id")
+sites_df <- sites_df %>%
+  dplyr::mutate(site_id = as.numeric(site_id))
+
+# split into blocks of a certain length
+split_into_LD_blocks <- function(df, block_length) {
+
+  block_range <- seq(from = min(df$site_id), to = max(df$site_id), by = block_length)
+  df %>%
+    dplyr::mutate(block_id = plyr::laply(site_id, function(x) sum(x > block_range)))
+
+}
+
+# group by chromosome and then split into blocks
+sites_df <- sites_df %>%
+  dplyr::group_by(chromosome) %>%
+  dplyr::group_modify(~ split_into_LD_blocks(.x, 1e4))
+
+# Now, want to sample one SNP from each group
+sites_sample_df <- sites_df %>%
+  dplyr::ungroup() %>%
+  dplyr::sample_frac() %>% #randomly shuffle df
+  dplyr::distinct(chromosome, block_id, .keep_all = TRUE) %>%
+  dplyr::select(chromosome, site_id)
+
+# Reconstruct site names
+selected_sites <- purrr::pmap_chr(
+  list(sites_sample_df$chromosome, sites_sample_df$site_id),
+  function(x, y) glue::glue("{x}:{y}")
+)
+
+summary_table_samp <- summary_table %>%
+  dplyr::filter(site %in% selected_sites)
+
+summary_table_signif <- summary_table %>%
+  dplyr::filter(sig_cat != 'NS')
+
+# generate a test df
+sites_test_df <- sites_df %>%
+  dplyr::ungroup() %>%
+  dplyr::sample_frac() %>% #randomly shuffle df
+  dplyr::distinct(chromosome, block_id, .keep_all = TRUE) %>%
+  dplyr::select(chromosome, site_id)
+
+# Reconstruct site names
+selected_sites_test <- purrr::pmap_chr(
+  list(sites_test_df$chromosome, sites_test_df$site_id),
+  function(x, y) glue::glue("{x}:{y}")
+)
+
+summary_table_test <- summary_table %>%
+  dplyr::filter(site %in% selected_sites_test)
+
+reg_fx_samp_mat <- t(matrix(
+  data = c(summary_table_samp$coef_CTRL, summary_table_samp$coef_HS),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_fx_samp_mat) <- c("ctrl", "hs")
+
+reg_fx_mat_test <- t(matrix(
+  data = c(summary_table_test$coef_CTRL, summary_table_test$coef_HS),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_fx_mat_test) <- c("ctrl", "hs")
+
+reg_fx_mat_signif <- t(matrix(
+  data = c(summary_table_signif$coef_CTRL, summary_table_signif$coef_HS),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_fx_mat_signif) <- c("ctrl", "hs")
+
+reg_se_samp_mat <- t(matrix(
+  data = c(summary_table_samp$std_error_ctrl, summary_table_samp$std_error_hs),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_se_samp_mat) <- c("ctrl", "hs")
+
+reg_se_mat_test <- t(matrix(
+  data = c(summary_table_test$std_error_ctrl, summary_table_test$std_error_hs),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_se_mat_test) <- c("ctrl", "hs")
+
+reg_se_mat_signif <- t(matrix(
+  data = c(summary_table_signif$std_error_ctrl, summary_table_signif$std_error_hs),
+  nrow = 2,
+  byrow = TRUE
+))
+colnames(reg_se_mat_signif) <- c("ctrl", "hs")
+
+mash_samp_data <- mashr::mash_set_data(reg_fx_samp_mat, reg_se_samp_mat)
+mash_test_data <- mashr::mash_set_data(reg_fx_mat_test, reg_se_mat_test)
+mash_signif_data <- mashr::mash_set_data(reg_fx_mat_signif, reg_se_mat_signif)
+
+mash_fit <- readr::read_rds("rds_data/12k_fitted_g_loose.rds")
+
+mash_posterior_samp <- mashr::mash(
+  data = mash_samp_data,
+  g = mash_fit,
+  fixg = TRUE
+)
+
+mash_posterior_signif <- mashr::mash(
+  data = mash_signif_data,
+  g = mash_fit,
+  fixg = TRUE
+)
+
+cov_mat_names_samp <- colnames(mash_posterior_samp$posterior_weights)
+map_mash_samp <- cov_mat_names_samp[max.col(mash_posterior_samp$posterior_weights)]
+map_mash_samp_df <- data.frame(
+  site = summary_table_samp$site, 
+  cov_map = map_mash_samp
+)
+summary_table_samp <- summary_table_samp %>%
+  dplyr::inner_join(map_mash_samp_df, by=c("site"))
+
+cov_mat_names_sig <- colnames(mash_posterior_signif$posterior_weights)
+map_mash_sig <- cov_mat_names_sig[
+  max.col(mash_posterior_signif$posterior_weights)
+]
+map_mash_sig_df <- data.frame(
+  site = summary_table_signif$site, 
+  cov_map = map_mash_sig
+)
+summary_table_sig <- summary_table_signif %>%
+  dplyr::inner_join(map_mash_sig_df, by=c("site"))
+```
+
+We will use the sparse mash model to classify signals this week. Below is a comparison of the classifications for a sample of 12030 SNPs (1 from each LD block). The rows are Pallares classifications and the columns are MASH classifications.
+
+```{r, include = FALSE}
+summary_table_samp <- summary_table_samp %>%
+  dplyr::mutate(
+    mixt_comp = dplyr::case_when(
+      cov_map %in% c("equal_corr_1.11", "equal_corr_1.12") ~ "equal_corr_1",
+      cov_map == "hs_amp_1.5_corr_1.11" ~ "hs_amp_1.5_corr_1",
+      cov_map == "hs_amp_3_corr_-1.14" ~ "hs_amp_3_corr_-1"
+    )
+  )
+
+tab <- table(summary_table_samp$sig_cat, summary_table_samp$mixt_comp)
+mat <- as.matrix(tab)
+control_spec_mat <- matrix(data = c(0, 0, 0), nrow = 1, ncol = 3)
+rownames(control_spec_mat) <- c("C")
+colnames(control_spec_mat) <- c("equal_corr_1", "hs_amp_1.5_corr_1", "hs_amp_3_corr_-1")
+null_spec_mat <- matrix(data = c(0, 0, 0, 0), nrow = 4)
+rownames(null_spec_mat) <- c("NS", "shared", "HS", "C")
+colnames(null_spec_mat) <- c("null")
+ctrl_spec_mat <- matrix(data = c(0, 0, 0, 0), nrow = 4)
+rownames(ctrl_spec_mat) <- c("NS", "shared", "HS", "C")
+colnames(ctrl_spec_mat) <- c("ctrl_spec")
+hs_spec_mat <- matrix(data = c(0, 0, 0, 0), nrow = 4)
+rownames(hs_spec_mat) <- c("NS", "shared", "HS", "C")
+colnames(hs_spec_mat) <- c("hs_spec")
+mat <- rbind(mat, control_spec_mat)
+mat <- cbind(mat, null_spec_mat)
+mat <- cbind(mat, ctrl_spec_mat)
+mat <- cbind(mat, hs_spec_mat)
+mat <- mat[c("NS", "shared", "HS", "C"),,drop=FALSE]
+rownames(mat) <- c("null", "shared", "hs_spec", "ctrl_spec")
+tab <- as.table(mat)
+```
+
+```{r, echo=FALSE}
+knitr::kable(tab)
+```
+
+Below is a plot of the estimated regression coefficients of Pallares colored by mash classification. Note that the columns in the table above that sum to zero are not shown in the plot legend. I felt that this made the plot easier to understand but we can certainly change this. 
+
+```{r, echo=FALSE}
+plot_colors <- c("orange", "blue", "red")
+names(plot_colors) <- c("equal_corr_1", "hs_amp_1.5_corr_1", "hs_amp_3_corr_-1")
+ggplot(data = summary_table_samp, aes(x = coef_HS, y = coef_CTRL, color = mixt_comp)) +
+  geom_point(size = .75) +
+  scale_color_manual(name = "mixt_comp", values = plot_colors)
+```
+
+
+It is also instructive to look only at the SNPs that Pallares classifies as significant.
+
+```{r, include=FALSE}
+summary_table_sig <- summary_table_sig %>%
+  dplyr::mutate(
+    mixt_comp = dplyr::case_when(
+      cov_map %in% c("equal_corr_1.11", "equal_corr_1.12") ~ "equal_corr_1",
+      cov_map %in% c("hs_amp_1.5_corr_1.11", "hs_amp_1.5_corr_1.15") ~ "hs_amp_1.5_corr_1",
+      cov_map == "hs_amp_3_corr_-1.14" ~ "hs_amp_3_corr_-1",
+      cov_map == "ctrl_spec.14" ~ "ctrl_spec"
+    )
+  )
+
+tab <- table(summary_table_sig$sig_cat, summary_table_sig$mixt_comp)
+mat <- as.matrix(tab)
+extra_mat <- matrix(data = c(0, 0, 0, 0, 0, 0), nrow = 3, ncol = 2)
+rownames(extra_mat) <- c("CTRL", "HS", "shared")
+colnames(extra_mat) <- c("null", "hs_spec")
+mat <- cbind(mat, extra_mat)
+rownames(mat) <- c("ctrl_spec", "hs_spec", "shared")
+mat <- mat[,c("equal_corr_1", "hs_amp_1.5_corr_1", "hs_amp_3_corr_-1", "null", "ctrl_spec", "hs_spec"),drop=FALSE]
+mat <- mat[c("shared", "hs_spec", "ctrl_spec"),,drop=FALSE]
+tab <- as.table(mat)
+```
+
+```{r, echo=FALSE}
+knitr::kable(tab)
+```
+
+Again, below is a plot of the regression coefficients colored by mash classification. 
+
+```{r, echo=FALSE}
+plot_colors <- c("orange", "blue", "red", "green")
+names(plot_colors) <- c("equal_corr_1", "hs_amp_1.5_corr_1", "hs_amp_3_corr_-1", "ctrl_spec")
+ggplot(data = summary_table_sig, aes(x = coef_HS, y = coef_CTRL, color = mixt_comp)) +
+  geom_point(size = .75) +
+  scale_color_manual(name = "mixt_comp", values = plot_colors)
+```
